@@ -1,7 +1,7 @@
 [package]
 name = "staking"
 version = "0.1.0"
-authors = ["[your_name] <[your_email]>"]
+authors = ["Adebara Ayomide <adebaraayomide@gmail.com>"]
 edition = "2021"
 
 [dependencies]
@@ -10,11 +10,18 @@ ink = { version = "4.0.1", default-features = false }
 scale = { package = "parity-scale-codec", version = "3", default-features = false, features = ["derive"] }
 scale-info = { version = "2.3", default-features = false, features = ["derive"], optional = true }
 
-[dev-dependencies]
-ink_e2e = "4.0.1"
+
+# entrying the brush dependency 
+openbrush = { tag = "3.0.0", git = "https://github.com/727-Ventures/openbrush-contracts", default-features = false, features = ["psp22"] }
+
 
 [lib]
+name = "staking"
 path = "lib.rs"
+crate-type = [
+	# Used for normal contract Wasm blobs.
+	"cdylib",
+]
 
 [features]
 default = ["std"]
@@ -22,6 +29,8 @@ std = [
     "ink/std",
     "scale/std",
     "scale-info/std",
+    # Brush dependency
+    "openbrush/std",
 ]
 ink-as-dependency = []
 e2e-tests = []

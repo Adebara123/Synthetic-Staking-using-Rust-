@@ -1,49 +1,175 @@
 #![cfg_attr(not(feature = "std"), no_std)]
+#![feature(min_specialization)]
 
+// # Brush dependency
+// "openbrush/std",
 
 
 #[ink::contract]
 pub mod staking {
+    use ink::{storage::Mapping};
+
+    // =========================================
+    // ERROR DECLARATION 
+    // =========================================
+    #[derive(Debug, PartialEq, Eq, scale::Encode, scale::Decode)]
+    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
+    pub enum Error {
+        NotOwner,
+        AddressIsAddressZero,
+        AmountShouldBeGreaterThanZero,
+        InsufficientFunds,
+        NotEnoughAllowance,
+        TokenTransferFailed,
+        Overflow,
+        StakingStillInProgress
+    }
 
 
     
-
-    /// Defines the storage of your contract.
-    /// Add new fields to the below struct in order
-    /// to add new static storage fields to your contract.
     #[ink(storage)]
-    pub struct Staking {
-        /// Stores a single `bool` value on the storage.
-        value: bool,
+    pub struct Staking { 
+        owner: AccountId,
+        duration: Balance,
+        finish_at: Balance,
+        updated_at: Balance,
+        reward_rate: Balance,
+        reward_per_token_stored: Balance,
+        total_supply: Balance,
+        user_reward_per_token_paid: Mapping<AccountId, Balance>,
+        rewards: Mapping<AccountId, Balance>,
+        balance_of: Mapping<AccountId, Balance>,
     }
 
     impl Staking {
-        /// Constructor that initializes the `bool` value to the given `init_value`.
+        
+        
+        // =========================================
+        // Constructor
+        // =========================================
         #[ink(constructor)]
-        pub fn new(init_value: bool) -> Self {
-            Self { value: init_value}
+        pub fn new(
+            reward_duration: Balance,
+        ) -> Self {
+            Self { 
+                owner: Self::env().caller(),
+                duration: reward_duration,
+                finish_at: 0,
+                updated_at: 0,
+                reward_rate: 0,
+                reward_per_token_stored: 0,
+                total_supply: 0,
+                user_reward_per_token_paid: Mapping::default(),
+                rewards: Mapping::default(),
+                balance_of: Mapping::default(),
+            }
         }
 
-        /// Constructor that initializes the `bool` value to `false`.
-        ///
-        /// Constructors can delegate to other constructors.
-        #[ink(constructor)]
-        pub fn default() -> Self {
-            Self::new(Default::default())
+        // =========================================
+        // Modifiers 
+        // =========================================
+
+        fn only_owner (&self) -> Result<(), Error> {
+            if self.env().caller() == self.owner {
+                Ok(())
+            } else {
+                Err(Error::NotOwner)
+            }
         }
 
-        /// A message that can be called on instantiated contracts.
-        /// This one flips the value of the stored `bool` from `true`
-        /// to `false` and vice versa.
+        fn update_reward (&mut self, address_acount: AccountId) {
+            self.reward_per_token_stored = self.reward_per_token();
+            self.updated_at = self.last_time_reward_applicable();
+
+            if address_acount != self.zero_address() {
+                self.rewards.insert(address_acount, &(self.earned(address_acount)));
+                self.user_reward_per_token_paid.insert(address_acount, &(self.reward_per_token_stored));
+            }
+
+        }
+
+        // fn address_zero_checker (&self) -> Result<(), Error> {
+        //     if self.env().caller() == self.zero_address() {
+        //         Err(Error::AddressIsAddressZero)
+        //     }else {
+        //         Ok(())
+        //     }
+        // }
+
+        fn zero_address(&self) -> AccountId {
+            [0u8; 32].into()
+        }
+
+        // =========================================
+        // Write functions
+        // =========================================
+        /// Function is used to the reward duration
         #[ink(message)]
-        pub fn flip(&mut self) {
-            self.value = !self.value;
+        pub fn set_rewards_duration(&mut self, reward_duration: Balance) -> Result<(), Error>{
+            self.only_owner()?;
+            if self.env().block_timestamp() as u128 >= self.finish_at {
+             return   Err(Error::StakingStillInProgress)
+            }
+            self.duration += reward_duration;
+
+            Ok(())
         }
 
-        /// Simply returns the current value of our `bool`.
+       
         #[ink(message)]
-        pub fn get(&self) -> bool {
-            self.value
+        pub fn reward_per_token (&self) -> Balance {
+            let result = if self.total_supply == 0 {
+                self.reward_per_token_stored
+              
+            }else {
+                self.reward_per_token_stored + 
+                (self.reward_rate * (self.last_time_reward_applicable() - self.updated_at) * 1e18 as u128) /
+                self.total_supply
+            };
+            result
+        }
+
+
+        /// This function is called by the user to stake into the contract 
+        #[ink(message)]
+        pub fn stake(&mut self, stake_amount: Balance) -> Result<(), Error>{
+            self.update_reward(self.env().caller());
+            if stake_amount <= 0 {
+              return  Err(Error::AmountShouldBeGreaterThanZero)
+            } 
+            let curent_bal = self.balance_of.get(self.env().caller()).unwrap_or(0) + &stake_amount;
+            self.balance_of.insert(self.env().caller(), &curent_bal);
+            self.total_supply += &stake_amount;
+            Ok(())
+            
+        }
+
+
+
+        // =========================================
+        // View functions  
+        // =========================================
+
+        #[ink(message)]
+        pub fn last_time_reward_applicable (&self) -> Balance {
+            self.min(self.finish_at, self.env().block_timestamp() as u128)
+        }
+
+        #[ink(message)]
+        pub fn earned (&self, address_account: AccountId) -> Balance {
+            (self.balance_of.get(address_account).unwrap_or(0) * 
+                (self.reward_per_token() - self.user_reward_per_token_paid.get(address_account).unwrap_or(0)) / 1e18 as u128) + 
+                self.rewards.get(address_account).unwrap_or(0)
+        }
+
+
+
+        fn min (&self, x: Balance, y: Balance) -> Balance {
+            if x <= y {
+                x
+            } else {
+                y
+            }
         }
     }
 
@@ -55,21 +181,14 @@ pub mod staking {
         /// Imports all the definitions from the outer scope so we can use them here.
         use super::*;
 
-        /// We test if the default constructor does its job.
-        #[ink::test]
-        fn default_works() {
-            let staking = Staking::default();
-            assert_eq!(staking.get(), false);
-        }
-
-        /// We test a simple use case of our contract.
-        #[ink::test]
-        fn it_works() {
-            let mut staking = Staking::new(false);
-            assert_eq!(staking.get(), false);
-            staking.flip();
-            assert_eq!(staking.get(), true);
-        }
+        // We test a simple use case of our contract.
+        // #[ink::test]
+        // fn it_works() {
+        //     let mut staking = Staking::new(false);
+        //     assert_eq!(staking.get(), false);
+        //     staking.flip();
+        //     assert_eq!(staking.get(), true);
+        // }
     }
 
 
