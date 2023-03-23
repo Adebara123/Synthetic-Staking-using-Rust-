@@ -1,13 +1,21 @@
 #![cfg_attr(not(feature = "std"), no_std)]
-#![feature(min_specialization)]
-
-// # Brush dependency
-// "openbrush/std",
-
+// use psp22::PSP22;
 
 #[ink::contract]
 pub mod staking {
+
+    // =====================================
+    //Library IMPORTED 
+    // =====================================
+    use openbrush::{
+        contracts::{
+            traits::psp22::PSP22Ref,
+        },
+    }; // this would be used for psp22 token interaction 
     use ink::{storage::Mapping};
+    use ink::env::CallFlags;
+    use ink::prelude::vec;
+
 
     // =========================================
     // ERROR DECLARATION 
@@ -18,10 +26,8 @@ pub mod staking {
         NotOwner,
         AddressIsAddressZero,
         AmountShouldBeGreaterThanZero,
-        InsufficientFunds,
-        NotEnoughAllowance,
+        NotEnoughBalanceForReward,
         TokenTransferFailed,
-        Overflow,
         StakingStillInProgress
     }
 
@@ -29,6 +35,8 @@ pub mod staking {
     
     #[ink(storage)]
     pub struct Staking { 
+        psp22_stake_token: ink::ContractRef<PSP22>,
+        psp22_reward_token: ink::ContractRef<PSP22>,
         owner: AccountId,
         duration: Balance,
         finish_at: Balance,
@@ -50,8 +58,12 @@ pub mod staking {
         #[ink(constructor)]
         pub fn new(
             reward_duration: Balance,
+            psp22_stake_token: ink::ContractRef<PSP22>,
+            psp22_reward_token: ink::ContractRef<PSP22>,
         ) -> Self {
             Self { 
+                psp22_stake_token,
+                psp22_reward_token,
                 owner: Self::env().caller(),
                 duration: reward_duration,
                 finish_at: 0,
@@ -117,7 +129,7 @@ pub mod staking {
 
        
         #[ink(message)]
-        pub fn reward_per_token (&self) -> Balance {
+        pub fn reward_per_token(&self) -> Balance {
             let result = if self.total_supply == 0 {
                 self.reward_per_token_stored
               
@@ -137,12 +149,71 @@ pub mod staking {
             if stake_amount <= 0 {
               return  Err(Error::AmountShouldBeGreaterThanZero)
             } 
+            let caller = self.env().caller();
+            // Transfer the token into the contract
+            self.psp22_stake_token.transfer_from(caller, self.env().account_id(), &stake_amount);
             let curent_bal = self.balance_of.get(self.env().caller()).unwrap_or(0) + &stake_amount;
             self.balance_of.insert(self.env().caller(), &curent_bal);
             self.total_supply += &stake_amount;
             Ok(())
-            
         }
+
+        #[ink(message)]
+        pub fn withdraw(&self, _amount: Balance) -> Result<(), Error> {
+            self.update_reward(self.env().caller());
+            if _amount < 0 {
+                return Err(Error::AmountShouldBeGreaterThanZero)
+            }
+            let caller = self.env().caller();
+            let new_bal = self.balance_of.get(self.env().caller()).unwrap_or(0) - &_amount;
+            self.balance_of.insert(self.env().caller(), &new_bal);
+            self.total_supply -= &_amount;
+            // Transfer the token to the person
+            self.psp22_stake_token.transfer_from(self.env().account_id(), caller, _amount);
+            Ok(())
+        }
+
+        #[ink(message)]
+        pub fn get_reward(&self) -> Result<(), Error> {
+            self.update_reward(self.env().caller());
+            let caller = self.env().caller();
+            let reward = self.rewards.get(self.env().caller()).unwrap_or(0);
+            if &reward > 0 {
+                self.get_result.insert(self.env().caller(), 0);
+                // Transfer the reward to the person 
+                self.psp22_reward_token.transfer_from(self.env().account_id(), caller, reward);
+            }
+            Ok(())
+        }
+
+        #[ink(message)]
+        pub fn update_reward_rate(&self, _amount: Balance) -> Result<(), Error> {
+            self.only_owner()?;
+            self.update_reward(self.zero_address());
+
+            let caller = self.env().caller();
+            self.psp22_reward_token.transfer_from(caller, self.env().account_id(), &_amount);
+
+            if self.env().block_timestamp() as u128 >= self.finish_at {
+                self.reward_rate = &_amount / self.duration;
+            }else {
+                let remaining_reward = (self.finish_at - self.env().block_timestamp() as u128) * self.reward_rate;
+                self.reward_rate = (&_amount + self.remaining_reward) / self.duration;
+            }
+
+            if self.reward_rate < 0 {
+                return Err(Error::)
+            }
+            if self.reward_rate * self.duration >= self.psp22_reward_token.balance_of(self.env().account_id()) as u128 {
+                return Err(Error::NotEnoughBalanceForReward)
+            }
+
+            self.finish_at = self.env().block_timestamp() as u128 + self.duration();
+            self.updated_at = self.env().block_timestamp() as u128;
+
+            Ok(())
+        } 
+
 
 
 

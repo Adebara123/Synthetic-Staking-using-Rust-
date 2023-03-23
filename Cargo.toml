@@ -10,10 +10,12 @@ ink = { version = "4.0.1", default-features = false }
 scale = { package = "parity-scale-codec", version = "3", default-features = false, features = ["derive"] }
 scale-info = { version = "2.3", default-features = false, features = ["derive"], optional = true }
 
-
 # entrying the brush dependency 
 openbrush = { tag = "3.0.0", git = "https://github.com/727-Ventures/openbrush-contracts", default-features = false, features = ["psp22"] }
 
+
+[dev-dependencies]
+ink_e2e = "4.0.1"
 
 [lib]
 name = "staking"
@@ -29,8 +31,7 @@ std = [
     "ink/std",
     "scale/std",
     "scale-info/std",
-    # Brush dependency
+      # Brush dependency
     "openbrush/std",
 ]
 ink-as-dependency = []
-e2e-tests = []
